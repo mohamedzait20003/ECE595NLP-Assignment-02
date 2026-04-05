@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>voice_control</name>
+  <version>1.0.0</version>
+  <description>Voice-controlled Duckiebot race system using Azure STT and GPT</description>
+
+  <maintainer email="moham@purdue.edu">Mohamed</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>message_generation</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>duckietown_msgs</depend>
+
+  <exec_depend>message_runtime</exec_depend>
+</package>

@@ -1,0 +1,3 @@
+# LIST YOUR APT PACKAGES HERE
+portaudio19-dev
+libsndfile1

@@ -1,0 +1,12 @@
+<launch>
+  <!-- Voice command node: USB mic -> Azure STT -> GPT -> /voice_control/voice_cmd -->
+  <node pkg="voice_control" type="voice_command_node.py" name="voice_command_node" output="screen">
+    <param name="audio_device_index" value="0" />
+  </node>
+
+  <!-- Lane follower node: camera PD control, activated by voice -->
+  <node pkg="voice_control" type="lane_follower_node.py" name="lane_follower_node" output="screen" />
+
+  <!-- Safety node: ToF obstacle detection -->
+  <node pkg="voice_control" type="bot_safety_node.py" name="safety_node" output="screen" />
+</launch>
