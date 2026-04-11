@@ -1,3 +1,8 @@
+# Local Config
+.vscode/
+*.db
+
+# Dev
 .env
 docs/build
 *pyc
