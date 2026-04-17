@@ -8,13 +8,20 @@ Priority system:
   4. Lane following — runs when voice says "follow lane"
 """
 
+import math
 import rospy
 from cv_bridge import CvBridge
-from voice_control.msg import VoiceCommand
-from duckietown_msgs.msg import Twist2DStamped
-from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String, Bool
-from voice_control.utils import detect_lane, KP, KD, DEFAULT_SPEED, HEARTBEAT_TIMEOUT
+from voice_control.msg import VoiceCommand
+from sensor_msgs.msg import CompressedImage
+from duckietown_msgs.msg import Twist2DStamped
+from voice_control.utils import detect_lane, KP, KD, DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SPEED_STEP, HEARTBEAT_TIMEOUT
+
+# Maneuver tuning constants
+_UTURN_OMEGA = 3.5          # rad/s spin rate for U-turn
+_CROSS_STEER_OMEGA = 1.8    # rad/s steer angle for lane cross
+_CROSS_STEER_DUR = 0.5      # seconds steering into adjacent lane
+_CROSS_STRAIGHT_DUR = 0.3   # seconds straightening in new lane
 
 
 class LaneFollowerNode:
@@ -83,9 +90,10 @@ class LaneFollowerNode:
 
         elif msg.cmd == "lane_follow":
             if msg.enable:
-                self.mode = "lane_follow"
-                self.target_speed = msg.v if msg.v > 0 else DEFAULT_SPEED
-                rospy.loginfo("Voice: LANE FOLLOW ON")
+                if self.mode != "lane_follow":
+                    self.target_speed = msg.v if msg.v > 0 else DEFAULT_SPEED
+                    self.mode = "lane_follow"
+                    rospy.loginfo("Voice: LANE FOLLOW ON")
             else:
                 self.mode = "idle"
                 self._send(0.0, 0.0)
@@ -93,6 +101,28 @@ class LaneFollowerNode:
 
         elif msg.cmd == "pass":
             self._do_pass(msg.side)
+
+        elif msg.cmd == "turn_around":
+            self._do_turn_around()
+
+        elif msg.cmd == "cross_lane":
+            self._do_cross_lane(msg.side)
+
+        elif msg.cmd == "speed_up":
+            self.target_speed = min(self.target_speed + SPEED_STEP, MAX_SPEED)
+            rospy.loginfo(f"Voice: SPEED UP -> {self.target_speed:.2f}")
+            if self.mode == "forward" and not self._is_blocked():
+                self._send(self.target_speed, 0.0)
+            elif self.mode == "turn" and not self._is_blocked():
+                self._send(self.target_speed, self.target_omega)
+
+        elif msg.cmd == "speed_down":
+            self.target_speed = max(self.target_speed - SPEED_STEP, MIN_SPEED)
+            rospy.loginfo(f"Voice: SPEED DOWN -> {self.target_speed:.2f}")
+            if self.mode == "forward" and not self._is_blocked():
+                self._send(self.target_speed, 0.0)
+            elif self.mode == "turn" and not self._is_blocked():
+                self._send(self.target_speed, self.target_omega)
 
     # ── Obstacle (can pause forward/turn movement) ───────────────────────────
 
@@ -184,6 +214,52 @@ class LaneFollowerNode:
             self._send(v, omega)
             rospy.sleep(duration)
         self.mode = "lane_follow"
+
+    def _do_turn_around(self):
+        """Spin in place 180° then resume forward or lane-follow."""
+        prev_mode = self.mode
+        self.mode = "idle"
+
+        # Brief stop to settle before spinning
+        self._send(0.0, 0.0)
+        rospy.sleep(0.25)
+
+        # Spin ~180° in place (π rad at _UTURN_OMEGA rad/s)
+        spin_duration = math.pi / _UTURN_OMEGA
+        self._send(0.0, _UTURN_OMEGA)
+        rospy.sleep(spin_duration)
+
+        # Settle after spin
+        self._send(0.0, 0.0)
+        rospy.sleep(0.25)
+
+        if prev_mode == "lane_follow":
+            self.mode = "lane_follow"
+        else:
+            self.mode = "forward"
+            if not self._is_blocked():
+                self._send(self.target_speed, 0.0)
+        rospy.loginfo("Voice: TURN AROUND complete")
+
+    def _do_cross_lane(self, side):
+        """Smooth lane change: steer into adjacent lane then straighten, keep following."""
+        sign = 1.0 if side == "left" else -1.0
+        # Block on_image for the duration of the maneuver so lane-follow PD
+        # corrections don't fight the cross-lane steering commands.
+        self.mode = "maneuver"
+
+        # Steer into adjacent lane
+        self._send(self.target_speed, sign * _CROSS_STEER_OMEGA)
+        rospy.sleep(_CROSS_STEER_DUR)
+
+        # Straighten in the new lane
+        self._send(self.target_speed, 0.0)
+        rospy.sleep(_CROSS_STRAIGHT_DUR)
+
+        # Hand off to lane follower to re-centre in the new lane
+        self.prev_error = 0.0
+        self.mode = "lane_follow"
+        rospy.loginfo(f"Voice: CROSS LANE {side} — lane follow resuming")
 
     def _send(self, v, omega):
         msg = Twist2DStamped()
