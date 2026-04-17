@@ -1,7 +1,7 @@
 <launch>
-  <!-- Voice command node: USB mic -> Azure STT -> GPT -> /voice_control/voice_cmd -->
+  <!-- HTTP command receiver: laptop client -> HTTP POST -> /voice_control/voice_cmd -->
   <node pkg="voice_control" type="voice_command_node.py" name="voice_command_node" output="screen">
-    <param name="audio_device_index" value="0" />
+    <param name="port" value="8080" />
   </node>
 
   <!-- Lane follower node: camera PD control, activated by voice -->
@@ -9,4 +9,7 @@
 
   <!-- Safety node: ToF obstacle detection -->
   <node pkg="voice_control" type="bot_safety_node.py" name="safety_node" output="screen" />
+
+  <!-- Traffic light detection: camera -> stop on red/yellow, go on green -->
+  <node pkg="voice_control" type="traffic_light_node.py" name="traffic_light_node" output="screen" />
 </launch>

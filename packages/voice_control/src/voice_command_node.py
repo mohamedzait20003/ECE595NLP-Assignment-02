@@ -1,87 +1,94 @@
 #!/usr/bin/env python3
+"""ROS node: HTTP server that receives recognized speech text from a remote
+client, parses it into a robot command, and publishes to /voice_control/voice_cmd."""
+
+import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 import rospy
-import sounddevice as sd
 from voice_control.msg import VoiceCommand
-import azure.cognitiveservices.speech as speechsdk
-from voice_control.utils import (VoiceSynthesis, AUDIO_DEVICE_INDEX, AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)
+from voice_control.utils import VoiceSynthesis
+
+_publisher = None
+_synthesis = None
 
 
-class VoiceCommandNode:
-    """ROS node: USB mic → Azure STT → VoiceSynthesis → /voice_control/voice_cmd"""
+class _Handler(BaseHTTPRequestHandler):
+    """POST /cmd  — receives {"text": "go forward"}, parses, publishes.
+       GET  /health — liveness check."""
 
-    def __init__(self):
-        rospy.init_node("voice_command_node")
+    def do_POST(self):
+        if self.path != "/cmd":
+            self._respond(404, {"error": "not found"})
+            return
 
-        self._pub       = rospy.Publisher("/voice_control/voice_cmd",
-                                          VoiceCommand, queue_size=10)
-        self._synthesis = VoiceSynthesis()
-        self._recognizer, self._push_stream = self._build_recognizer()
-        self._mic = self._build_mic()
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._respond(400, {"error": "invalid json"})
+            return
 
-    # ── public ───────────────────────────────────────────────────────────────
-
-    def run(self):
-        self._recognizer.start_continuous_recognition()
-        self._mic.start()
-        rospy.loginfo("voice_command_node ready — listening")
-        rospy.spin()
-        self._shutdown()
-
-    # ── private ──────────────────────────────────────────────────────────────
-
-    def _build_recognizer(self):
-        speech_cfg = speechsdk.SpeechConfig(
-            subscription=AZURE_SPEECH_KEY,
-            region=AZURE_SPEECH_REGION
-        )
-        speech_cfg.speech_recognition_language = "en-US"
-
-        push_stream = speechsdk.audio.PushAudioInputStream()
-        audio_cfg   = speechsdk.audio.AudioConfig(stream=push_stream)
-        recognizer  = speechsdk.SpeechRecognizer(speech_cfg, audio_cfg)
-        recognizer.recognized.connect(self._on_recognized)
-        return recognizer, push_stream
-
-    def _build_mic(self):
-        def _audio_cb(indata, *_):
-            self._push_stream.write(bytes(indata))
-
-        return sd.RawInputStream(
-            samplerate=16000,
-            channels=1,
-            dtype="int16",
-            device=AUDIO_DEVICE_INDEX,
-            callback=_audio_cb,
-            blocksize=3200
-        )
-
-    def _on_recognized(self, evt):
-        text = evt.result.text.strip()
+        text = body.get("text", "").strip()
         if not text:
+            self._respond(400, {"error": "empty text"})
             return
-        rospy.loginfo(f"[STT] {text}")
 
-        cmd = self._synthesis.parse(text)
+        rospy.loginfo(f"[HTTP] received: '{text}'")
+
+        cmd = _synthesis.parse(text)
         if cmd is None:
-            rospy.logwarn(f"[VoiceCommandNode] Could not parse: '{text}'")
+            rospy.logwarn(f"[HTTP] could not parse: '{text}'")
+            self._respond(200, {"status": "unrecognized", "text": text})
             return
 
-        rospy.loginfo(f"[CMD] {cmd}")
-        self._pub.publish(self._to_msg(cmd))
-
-    def _to_msg(self, d: dict) -> VoiceCommand:
         msg = VoiceCommand()
-        msg.cmd    = d.get("cmd", "")
-        msg.v      = float(d.get("v", 0.0))
-        msg.omega  = float(d.get("omega", 0.0))
-        msg.enable = bool(d.get("enable", False))
-        msg.side   = d.get("side", "")
-        return msg
+        msg.cmd = cmd.get("cmd", "")
+        msg.v = float(cmd.get("v", 0.0))
+        msg.omega = float(cmd.get("omega", 0.0))
+        msg.enable = bool(cmd.get("enable", False))
+        msg.side = cmd.get("side", "")
 
-    def _shutdown(self):
-        self._mic.stop()
-        self._recognizer.stop_continuous_recognition()
+        _publisher.publish(msg)
+        rospy.loginfo(f"[CMD] {cmd}")
+        self._respond(200, {"status": "ok", "cmd": cmd})
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._respond(200, {"status": "ok", "node": "voice_command_node"})
+        else:
+            self._respond(404, {"error": "not found"})
+
+    def _respond(self, code, data):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def log_message(self, fmt, *args):
+        rospy.logdebug(fmt % args)
+
+
+def main():
+    global _publisher, _synthesis
+    rospy.init_node("voice_command_node")
+
+    _publisher = rospy.Publisher(
+        "/voice_control/voice_cmd", VoiceCommand, queue_size=10
+    )
+    _synthesis = VoiceSynthesis()
+
+    port = rospy.get_param("~port", 8080)
+    server = HTTPServer(("0.0.0.0", port), _Handler)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    rospy.loginfo(f"voice_command_node listening on 0.0.0.0:{port}")
+
+    rospy.spin()
+    server.shutdown()
 
 
 if __name__ == "__main__":
-    VoiceCommandNode().run()
+    main()

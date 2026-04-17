@@ -2,7 +2,3 @@
 # NOTE: only place non-Duckietown libraries here; pin versions only if necessary
 numpy
 opencv-python-headless
-azure-cognitiveservices-speech
-openai
-sounddevice
-python-dotenv

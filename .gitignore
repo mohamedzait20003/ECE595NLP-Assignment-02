@@ -4,6 +4,7 @@
 
 # Dev
 .env
+.venv/
 docs/build
 *pyc
 

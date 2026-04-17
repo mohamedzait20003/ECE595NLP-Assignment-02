@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+"""ROS node: publishes obstacle state from ToF sensor to /voice_control/obstacle."""
+
 import rospy
 from sensor_msgs.msg import Range
-from voice_control.msg import VoiceCommand
-from duckietown_msgs.msg import Twist2DStamped
+from std_msgs.msg import Bool
 from voice_control.utils import OBSTACLE_STOP_DIST
+
 
 class SafetyNode:
     def __init__(self):
@@ -10,8 +13,7 @@ class SafetyNode:
         self.blocked = False
 
         self.pub = rospy.Publisher(
-            "/duckiebot/wheels_driver_node/wheels_cmd",
-            Twist2DStamped, queue_size=1
+            "/voice_control/obstacle", Bool, queue_size=1
         )
         rospy.Subscriber(
             "/duckiebot/front_center_tof_driver_node/range",
@@ -23,19 +25,15 @@ class SafetyNode:
     def on_range(self, msg):
         if msg.range < OBSTACLE_STOP_DIST:
             if not self.blocked:
-                rospy.logwarn(f"Obstacle at {msg.range:.2f}m — STOP")
+                rospy.logwarn(f"Obstacle at {msg.range:.2f}m — blocked")
                 self.blocked = True
-                self._stop()
+                self.pub.publish(Bool(data=True))
         else:
             if self.blocked:
                 rospy.loginfo("Obstacle cleared")
                 self.blocked = False
+                self.pub.publish(Bool(data=False))
 
-    def _stop(self):
-        msg = Twist2DStamped()
-        msg.v = 0.0
-        msg.omega = 0.0
-        self.pub.publish(msg)
 
 if __name__ == "__main__":
     SafetyNode()
