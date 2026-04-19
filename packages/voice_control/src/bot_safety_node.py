@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""ROS node: publishes obstacle state from ToF sensor to /voice_control/obstacle."""
-
 import os
 import rospy
 from sensor_msgs.msg import Range
 from std_msgs.msg import Bool
 from voice_control.utils import OBSTACLE_STOP_DIST
 
+DEBOUNCE_COUNT = 3
+MIN_VALID_RANGE = 0.05  # meters
 
 class SafetyNode:
     def __init__(self):
         rospy.init_node("safety_node")
         self.blocked = False
+        self.block_streak = 0
+        self.clear_streak = 0
 
         self.pub = rospy.Publisher(
             "/voice_control/obstacle", Bool, queue_size=1
@@ -25,13 +27,23 @@ class SafetyNode:
         rospy.spin()
 
     def on_range(self, msg):
-        if msg.range < OBSTACLE_STOP_DIST:
-            if not self.blocked:
-                rospy.logwarn(f"Obstacle at {msg.range:.2f}m — blocked")
+        r = msg.range
+
+        # Discard obviously invalid readings (sensor noise / out-of-range).
+        if r < MIN_VALID_RANGE or r > msg.max_range:
+            return
+
+        if r < OBSTACLE_STOP_DIST:
+            self.block_streak += 1
+            self.clear_streak = 0
+            if not self.blocked and self.block_streak >= DEBOUNCE_COUNT:
+                rospy.logwarn(f"Obstacle at {r:.2f}m — blocked")
                 self.blocked = True
                 self.pub.publish(Bool(data=True))
         else:
-            if self.blocked:
+            self.clear_streak += 1
+            self.block_streak = 0
+            if self.blocked and self.clear_streak >= DEBOUNCE_COUNT:
                 rospy.loginfo("Obstacle cleared")
                 self.blocked = False
                 self.pub.publish(Bool(data=False))

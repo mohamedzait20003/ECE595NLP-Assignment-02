@@ -12,4 +12,4 @@ KD = float(os.getenv("KD", "0.5"))
 
 # ── Safety ────────────────────────────────────────────────────────────────────
 OBSTACLE_STOP_DIST = float(os.getenv("OBSTACLE_STOP_DIST", "0.15"))  # meters
-HEARTBEAT_TIMEOUT  = float(os.getenv("HEARTBEAT_TIMEOUT",  "2.0"))   # seconds
+HEARTBEAT_TIMEOUT  = float(os.getenv("HEARTBEAT_TIMEOUT",  "4.0"))   # seconds
