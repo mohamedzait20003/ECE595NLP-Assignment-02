@@ -9,6 +9,8 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
 )
 
+catkin_python_setup()
+
 add_message_files(
   FILES
   VoiceCommand.msg
@@ -22,5 +24,3 @@ generate_messages(
 catkin_package(
   CATKIN_DEPENDS rospy std_msgs sensor_msgs duckietown_msgs message_runtime
 )
-
-catkin_python_setup()

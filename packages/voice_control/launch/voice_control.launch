@@ -1,7 +1,7 @@
 <launch>
   <!-- HTTP command receiver: laptop client -> HTTP POST -> /voice_control/voice_cmd -->
   <node pkg="voice_control" type="voice_command_node.py" name="voice_command_node" output="screen">
-    <param name="port" value="8080" />
+    <param name="port" value="9090" />
   </node>
 
   <!-- Lane follower node: camera PD control, activated by voice -->

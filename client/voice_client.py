@@ -18,21 +18,32 @@ AZURE_SPEECH_REGION = os.environ["AZURE_SPEECH_REGION"]
 def send_text(bot_url: str, text: str):
     try:
         r = requests.post(f"{bot_url}/cmd", json={"text": text}, timeout=3)
+    except requests.Timeout:
+        print(f"  -> timeout contacting bot at {bot_url}")
+        return
+    except requests.RequestException as e:
+        print(f"  -> cannot reach bot at {bot_url}: {e}")
+        return
+
+    try:
         data = r.json()
-        if data.get("status") == "ok":
-            print(f"  -> bot executed: {data.get('cmd')}")
-        elif data.get("status") == "unrecognized":
-            print(f"  -> bot could not parse: '{text}'")
-        else:
-            print(f"  -> bot error: {r.status_code} {r.text}")
-    except requests.ConnectionError:
-        print(f"  -> cannot reach bot at {bot_url}")
+    except ValueError:
+        print(f"  -> bot returned non-JSON ({r.status_code}): {r.text[:120]}")
+        return
+
+    status = data.get("status")
+    if status == "ok":
+        print(f"  -> bot executed: {data.get('cmd')}")
+    elif status == "unrecognized":
+        print(f"  -> bot could not parse: '{text}'")
+    else:
+        print(f"  -> bot error {r.status_code}: {data}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Voice client for Duckiebot")
     parser.add_argument("--bot", required=True,
-                        help="Duckiebot URL, e.g. http://zaitounsbot.local:8080")
+                        help="Duckiebot URL, e.g. http://zaitounsbot.local:9090")
     parser.add_argument("--device", type=int, default=None,
                         help="Audio input device index (run with --list-devices to see)")
     parser.add_argument("--list-devices", action="store_true",
@@ -44,13 +55,16 @@ def main():
         return
 
     bot_url = args.bot.rstrip("/")
+    if not bot_url.startswith(("http://", "https://")):
+        bot_url = "http://" + bot_url
 
     # Check bot connectivity
     try:
         r = requests.get(f"{bot_url}/health", timeout=3)
+        r.raise_for_status()
         print(f"Bot connected: {r.json()}")
-    except requests.ConnectionError:
-        print(f"WARNING: Cannot reach bot at {bot_url} — commands will fail")
+    except requests.RequestException as e:
+        print(f"WARNING: Cannot reach bot at {bot_url} ({e}) — commands will fail")
 
     # Azure STT setup
     speech_cfg = speechsdk.SpeechConfig(

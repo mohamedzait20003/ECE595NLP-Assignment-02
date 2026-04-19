@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 from .load_config import DEFAULT_SPEED
 
 FAST_PATTERNS = {
@@ -22,7 +23,7 @@ FAST_PATTERNS = {
 class VoiceSynthesis:
     """Parses spoken text into a command dict using regex pattern matching."""
 
-    def parse(self, text: str) -> dict | None:
+    def parse(self, text: str) -> Optional[dict]:
         """Return a command dict, or None if no pattern matches."""
         lower = text.lower()
         for pattern, cmd in FAST_PATTERNS.items():
