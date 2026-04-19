@@ -57,6 +57,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._respond(200, {"status": "ok", "node": "voice_command_node"})
+        elif self.path == "/heartbeat":
+            msg = VoiceCommand()
+            msg.cmd = "heartbeat"
+            _publisher.publish(msg)
+            self._respond(200, {"status": "ok"})
         else:
             self._respond(404, {"error": "not found"})
 

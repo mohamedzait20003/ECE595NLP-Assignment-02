@@ -3,16 +3,31 @@
 
 import os
 import argparse
+import threading
+import time
 import requests
 import sounddevice as sd
 from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
+
+HEARTBEAT_INTERVAL = 1.0
 
 # ── Load .env from project root ─────────────────────────────────────────────
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 AZURE_SPEECH_KEY = os.environ["AZURE_SPEECH_KEY"]
 AZURE_SPEECH_REGION = os.environ["AZURE_SPEECH_REGION"]
+
+
+def start_heartbeat(bot_url: str, stop_event: threading.Event):
+    def loop():
+        while not stop_event.is_set():
+            try:
+                requests.get(f"{bot_url}/heartbeat", timeout=1)
+            except requests.RequestException:
+                pass
+            time.sleep(HEARTBEAT_INTERVAL)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def send_text(bot_url: str, text: str):
@@ -99,6 +114,10 @@ def main():
 
     recognizer.start_continuous_recognition()
     mic.start()
+
+    heartbeat_stop = threading.Event()
+    start_heartbeat(bot_url, heartbeat_stop)
+
     print(f"Listening on mic (device={args.device}) — speak commands, Ctrl+C to quit")
     print(f"Sending to {bot_url}")
 
@@ -108,6 +127,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        heartbeat_stop.set()
         mic.stop()
         recognizer.stop_continuous_recognition()
 
