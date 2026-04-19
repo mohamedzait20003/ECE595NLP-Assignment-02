@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ROS node: publishes obstacle state from ToF sensor to /voice_control/obstacle."""
 
+import os
 import rospy
 from sensor_msgs.msg import Range
 from std_msgs.msg import Bool
@@ -15,8 +16,9 @@ class SafetyNode:
         self.pub = rospy.Publisher(
             "/voice_control/obstacle", Bool, queue_size=1
         )
+        veh = os.environ.get("VEHICLE_NAME", "duckiebot")
         rospy.Subscriber(
-            "/duckiebot/front_center_tof_driver_node/range",
+            f"/{veh}/front_center_tof_driver_node/range",
             Range, self.on_range
         )
         rospy.loginfo("safety_node ready")

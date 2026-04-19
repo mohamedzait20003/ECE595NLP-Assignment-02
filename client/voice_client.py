@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Laptop-side voice client: mic -> Azure STT -> HTTP POST text to Duckiebot."""
 
 import os
-import argparse
-import threading
 import time
+import argparse
 import requests
+import threading
 import sounddevice as sd
 from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk

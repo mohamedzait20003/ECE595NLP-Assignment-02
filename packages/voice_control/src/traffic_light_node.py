@@ -2,6 +2,7 @@
 """ROS node: detects traffic lights from camera and publishes state to
 /voice_control/traffic_light so other nodes can react."""
 
+import os
 import rospy
 from cv_bridge import CvBridge
 from std_msgs.msg import String
@@ -20,8 +21,9 @@ class TrafficLightNode:
             "/voice_control/traffic_light", String, queue_size=1
         )
 
+        veh = os.environ.get("VEHICLE_NAME", "duckiebot")
         rospy.Subscriber(
-            "/duckiebot/camera_node/image/compressed",
+            f"/{veh}/camera_node/image/compressed",
             CompressedImage, self.on_image
         )
 

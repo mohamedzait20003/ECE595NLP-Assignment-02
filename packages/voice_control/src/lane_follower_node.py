@@ -9,6 +9,7 @@ Priority system:
 """
 
 import math
+import os
 import rospy
 from cv_bridge import CvBridge
 from std_msgs.msg import String, Bool
@@ -41,14 +42,15 @@ class LaneFollowerNode:
         self.obstacle_blocked = False
         self.traffic_light = "none"  # "red", "yellow", "green", "none"
 
+        veh = os.environ.get("VEHICLE_NAME", "duckiebot")
         self.pub = rospy.Publisher(
-            "/duckiebot/wheels_driver_node/wheels_cmd",
+            f"/{veh}/car_cmd_switch_node/cmd",
             Twist2DStamped, queue_size=1
         )
 
         # Subscriptions
         rospy.Subscriber("/voice_control/voice_cmd", VoiceCommand, self.on_voice)
-        rospy.Subscriber("/duckiebot/camera_node/image/compressed", CompressedImage, self.on_image)
+        rospy.Subscriber(f"/{veh}/camera_node/image/compressed", CompressedImage, self.on_image)
         rospy.Subscriber("/voice_control/traffic_light", String, self.on_traffic_light)
         rospy.Subscriber("/voice_control/obstacle", Bool, self.on_obstacle)
 
