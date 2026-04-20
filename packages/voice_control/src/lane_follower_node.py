@@ -186,7 +186,7 @@ class LaneFollowerNode:
         if lateral_err is None:
             return
 
-        omega = -(KP * lateral_err + KD * (lateral_err - self.prev_error))
+        omega = self.forward_trim - (KP * lateral_err + KD * (lateral_err - self.prev_error))
         self.prev_error = lateral_err
         self._send(self.target_speed, omega)
 
@@ -216,8 +216,6 @@ class LaneFollowerNode:
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _is_blocked(self):
-        # Manual override bypasses all safety blocks — used when the user
-        # believes the ToF+camera fusion is falsely detecting an obstacle.
         if self.override:
             return False
         if self.mode not in ("forward", "lane_follow"):
@@ -238,7 +236,6 @@ class LaneFollowerNode:
             self._send(self.target_speed, self.target_omega)
         elif self.mode == "reverse":
             self._send(-self.target_speed, self.forward_trim)
-        # lane_follow resumes automatically via on_image
 
     def _do_pass(self, side):
         sign = 1.0 if side == "left" else -1.0
