@@ -5,7 +5,7 @@ from sensor_msgs.msg import Range
 from std_msgs.msg import Bool
 from voice_control.utils import OBSTACLE_STOP_DIST
 
-DEBOUNCE_COUNT = 3
+DEBOUNCE_COUNT = 2
 MIN_VALID_RANGE = 0.05  # meters
 
 class SafetyNode:

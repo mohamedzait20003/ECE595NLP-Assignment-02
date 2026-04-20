@@ -169,12 +169,25 @@ class LaneFollowerNode:
     # ── Heartbeat ────────────────────────────────────────────────────────────
 
     def heartbeat_check(self, _event):
-        if self.mode != "idle":
-            dt = (rospy.Time.now() - self.last_cmd_time).to_sec()
-            if dt > HEARTBEAT_TIMEOUT:
-                rospy.logwarn("Heartbeat timeout — stopping")
-                self.mode = "idle"
-                self._send(0.0, 0.0)
+        if self.mode == "idle":
+            return
+
+        dt = (rospy.Time.now() - self.last_cmd_time).to_sec()
+        if dt > HEARTBEAT_TIMEOUT:
+            rospy.logwarn("Heartbeat timeout — stopping")
+            self.mode = "idle"
+            self._send(0.0, 0.0)
+            return
+
+        if self._is_blocked():
+            self._send(0.0, 0.0)
+            return
+        if self.mode == "forward":
+            self._send(self.target_speed, 0.0)
+        elif self.mode == "turn":
+            self._send(self.target_speed, self.target_omega)
+        elif self.mode == "reverse":
+            self._send(-self.target_speed, 0.0)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -238,8 +251,6 @@ class LaneFollowerNode:
     def _do_cross_lane(self, side):
         """Smooth lane change: steer into adjacent lane then straighten, keep following."""
         sign = 1.0 if side == "left" else -1.0
-        # Block on_image for the duration of the maneuver so lane-follow PD
-        # corrections don't fight the cross-lane steering commands.
         self.mode = "maneuver"
 
         # Steer into adjacent lane
