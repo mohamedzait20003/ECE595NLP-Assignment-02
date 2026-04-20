@@ -5,6 +5,7 @@ import time
 import argparse
 import requests
 import threading
+import numpy as np
 import sounddevice as sd
 from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
@@ -97,10 +98,45 @@ def main():
         print(f"[STT] {text}")
         send_text(bot_url, text)
 
+    def on_recognizing(evt):
+        partial = evt.result.text.strip()
+        if partial:
+            print(f"[...] {partial}", end="\r")
+
+    def on_canceled(evt):
+        print(f"[STT canceled] reason={evt.reason} error={evt.error_details}")
+
+    def on_session_started(_evt):
+        print("[STT] session started")
+
+    def on_session_stopped(_evt):
+        print("[STT] session stopped")
+
     recognizer.recognized.connect(on_recognized)
+    recognizer.recognizing.connect(on_recognizing)
+    recognizer.canceled.connect(on_canceled)
+    recognizer.session_started.connect(on_session_started)
+    recognizer.session_stopped.connect(on_session_stopped)
+
+    last_level_print = [0.0]
 
     def audio_cb(indata, *_):
         push_stream.write(bytes(indata))
+        now = time.time()
+        if now - last_level_print[0] > 1.0:
+            samples = np.frombuffer(indata, dtype=np.int16)
+            if samples.size:
+                rms = int(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+                print(f"[mic level] rms={rms}", end="\r")
+            last_level_print[0] = now
+
+    # Resolve the selected input device and print it so the user can confirm.
+    try:
+        dev_info = sd.query_devices(args.device, "input")
+        print(f"Mic device: [{dev_info.get('index', '?')}] {dev_info['name']} "
+              f"(default_sr={dev_info['default_samplerate']})")
+    except Exception as e:
+        print(f"WARNING: could not query input device {args.device}: {e}")
 
     mic = sd.RawInputStream(
         samplerate=16000,

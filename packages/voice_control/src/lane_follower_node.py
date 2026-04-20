@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
-"""Central driving controller. Only this node publishes to the wheels.
 
-Priority system:
-  1. Voice commands (highest) — set the driving mode/action
-  2. Obstacles — pause movement until cleared or command changes
-  3. Traffic lights — pause movement, voice can override
-  4. Lane following — runs when voice says "follow lane"
-"""
-
-import math
 import os
+import math
 import rospy
 from cv_bridge import CvBridge
 from std_msgs.msg import String, Bool
@@ -32,7 +24,7 @@ class LaneFollowerNode:
         self.bridge = CvBridge()
 
         # Driving state set by voice commands
-        self.mode = "idle"        # idle | forward | turn | reverse | lane_follow | pass
+        self.mode = "idle"
         self.target_speed = DEFAULT_SPEED
         self.target_omega = 0.0
         self.prev_error = 0.0
@@ -40,7 +32,7 @@ class LaneFollowerNode:
 
         # External blockers
         self.obstacle_blocked = False
-        self.traffic_light = "none"  # "red", "yellow", "green", "none"
+        self.traffic_light = "none"
 
         veh = os.environ.get("VEHICLE_NAME", "duckiebot")
         self.pub = rospy.Publisher(

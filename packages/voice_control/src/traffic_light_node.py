@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""ROS node: detects traffic lights from camera and publishes state to
-/voice_control/traffic_light so other nodes can react."""
 
 import os
 import rospy
@@ -9,6 +7,7 @@ from std_msgs.msg import String
 from sensor_msgs.msg import CompressedImage
 from voice_control.utils import detect_traffic_light
 
+DEBOUNCE_FRAMES = 4
 
 class TrafficLightNode:
     def __init__(self):
@@ -16,6 +15,8 @@ class TrafficLightNode:
 
         self.bridge = CvBridge()
         self.state = None
+        self.candidate = None
+        self.candidate_count = 0
 
         self.state_pub = rospy.Publisher(
             "/voice_control/traffic_light", String, queue_size=1
@@ -34,6 +35,15 @@ class TrafficLightNode:
         frame = self.bridge.compressed_imgmsg_to_cv2(msg, "bgr8")
         color = detect_traffic_light(frame)
 
+        if color == self.candidate:
+            self.candidate_count += 1
+        else:
+            self.candidate = color
+            self.candidate_count = 1
+
+        if self.candidate_count < DEBOUNCE_FRAMES:
+            return
+
         if color == self.state:
             return
 
@@ -41,7 +51,7 @@ class TrafficLightNode:
         if color:
             self.state_pub.publish(String(data=color))
             rospy.loginfo(f"Traffic light: {color}")
-        elif self.state is not None:
+        else:
             self.state_pub.publish(String(data="none"))
             rospy.loginfo("Traffic light: none")
 

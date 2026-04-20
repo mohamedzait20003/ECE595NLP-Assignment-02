@@ -1,20 +1,19 @@
 import cv2
 import numpy as np
 
-# Minimum pixel area
-MIN_AREA = 300
+MIN_AREA = 600
+MIN_CIRCULARITY = 0.6
 
-# HSV thresholds for traffic light colors
-RED_LOW_1 = np.array([0, 120, 100], dtype=np.uint8)
-RED_HIGH_1 = np.array([10, 255, 255], dtype=np.uint8)
-RED_LOW_2 = np.array([160, 120, 100], dtype=np.uint8)
+RED_LOW_1 = np.array([0, 160, 180], dtype=np.uint8)
+RED_HIGH_1 = np.array([8, 255, 255], dtype=np.uint8)
+RED_LOW_2 = np.array([165, 160, 180], dtype=np.uint8)
 RED_HIGH_2 = np.array([180, 255, 255], dtype=np.uint8)
 
-YELLOW_LOW = np.array([15, 120, 100], dtype=np.uint8)
-YELLOW_HIGH = np.array([35, 255, 255], dtype=np.uint8)
+YELLOW_LOW = np.array([18, 160, 180], dtype=np.uint8)
+YELLOW_HIGH = np.array([32, 255, 255], dtype=np.uint8)
 
-GREEN_LOW = np.array([40, 80, 80], dtype=np.uint8)
-GREEN_HIGH = np.array([85, 255, 255], dtype=np.uint8)
+GREEN_LOW = np.array([45, 120, 150], dtype=np.uint8)
+GREEN_HIGH = np.array([80, 255, 255], dtype=np.uint8)
 
 
 def detect_traffic_light(frame):
@@ -25,7 +24,6 @@ def detect_traffic_light(frame):
     """
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Only look at the upper portion of the frame where lights would be
     h = hsv.shape[0]
     roi = hsv[:int(h * 0.6), :]
 
@@ -64,6 +62,6 @@ def _circular_area(mask):
         if perimeter == 0:
             continue
         circularity = 4 * np.pi * area / (perimeter * perimeter)
-        if circularity > 0.4:
+        if circularity > MIN_CIRCULARITY:
             max_area = max(max_area, area)
     return max_area
