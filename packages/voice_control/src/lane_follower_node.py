@@ -8,14 +8,13 @@ from std_msgs.msg import String, Bool
 from voice_control.msg import VoiceCommand
 from sensor_msgs.msg import CompressedImage
 from duckietown_msgs.msg import Twist2DStamped
-from voice_control.utils import detect_lane, KP, KD, DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SPEED_STEP, HEARTBEAT_TIMEOUT
+from voice_control.utils import (detect_lane, KP, KD, DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SPEED_STEP, HEARTBEAT_TIMEOUT, FORWARD_TRIM)
 
 # Maneuver tuning constants
 _UTURN_OMEGA = 3.5          # rad/s spin rate for U-turn
 _CROSS_STEER_OMEGA = 1.8    # rad/s steer angle for lane cross
 _CROSS_STEER_DUR = 0.5      # seconds steering into adjacent lane
 _CROSS_STRAIGHT_DUR = 0.3   # seconds straightening in new lane
-
 
 class LaneFollowerNode:
     def __init__(self):
@@ -30,9 +29,18 @@ class LaneFollowerNode:
         self.prev_error = 0.0
         self.last_cmd_time = rospy.Time.now()
 
+        # Wheel-trim counter-steer. Launch-file param wins; falls back to the
+        # env-var default from utils.load_config.
+        self.forward_trim = float(rospy.get_param("~forward_trim", FORWARD_TRIM))
+        rospy.loginfo(f"forward_trim = {self.forward_trim:.3f}")
+
         # External blockers
         self.obstacle_blocked = False
         self.traffic_light = "none"
+
+        # Manual override — when True, obstacle/traffic-light blocks are
+        # ignored. Toggled by the "override" voice command; cleared by "stop".
+        self.override = False
 
         veh = os.environ.get("VEHICLE_NAME", "duckiebot")
         self.pub = rospy.Publisher(
@@ -57,14 +65,31 @@ class LaneFollowerNode:
 
         if msg.cmd == "stop":
             self.mode = "idle"
+            self.override = False
             self._send(0.0, 0.0)
             rospy.loginfo("Voice: STOP")
+
+        elif msg.cmd == "override":
+            self.override = not self.override
+            if self.override:
+                rospy.logwarn("Voice: OVERRIDE ON — obstacle/light blocks ignored")
+                self._resume()
+            else:
+                rospy.loginfo("Voice: OVERRIDE OFF — normal safety resumed")
+
+        elif msg.cmd == "max_speed":
+            self.target_speed = MAX_SPEED
+            rospy.loginfo(f"Voice: MAX SPEED -> {self.target_speed:.2f}")
+            if self.mode == "forward" and not self._is_blocked():
+                self._send(self.target_speed, self.forward_trim)
+            elif self.mode == "turn" and not self._is_blocked():
+                self._send(self.target_speed, self.target_omega)
 
         elif msg.cmd == "forward":
             self.mode = "forward"
             self.target_speed = msg.v if msg.v > 0 else DEFAULT_SPEED
             if not self._is_blocked():
-                self._send(self.target_speed, 0.0)
+                self._send(self.target_speed, self.forward_trim)
             rospy.loginfo(f"Voice: FORWARD at {self.target_speed}")
 
         elif msg.cmd == "turn":
@@ -79,7 +104,7 @@ class LaneFollowerNode:
             self.mode = "reverse"
             self.target_speed = msg.v if msg.v > 0 else DEFAULT_SPEED
             # Obstacles behind are not detected, so just go
-            self._send(-self.target_speed, 0.0)
+            self._send(-self.target_speed, self.forward_trim)
             rospy.loginfo(f"Voice: REVERSE at {self.target_speed}")
 
         elif msg.cmd == "lane_follow":
@@ -106,7 +131,7 @@ class LaneFollowerNode:
             self.target_speed = min(self.target_speed + SPEED_STEP, MAX_SPEED)
             rospy.loginfo(f"Voice: SPEED UP -> {self.target_speed:.2f}")
             if self.mode == "forward" and not self._is_blocked():
-                self._send(self.target_speed, 0.0)
+                self._send(self.target_speed, self.forward_trim)
             elif self.mode == "turn" and not self._is_blocked():
                 self._send(self.target_speed, self.target_omega)
 
@@ -114,7 +139,7 @@ class LaneFollowerNode:
             self.target_speed = max(self.target_speed - SPEED_STEP, MIN_SPEED)
             rospy.loginfo(f"Voice: SPEED DOWN -> {self.target_speed:.2f}")
             if self.mode == "forward" and not self._is_blocked():
-                self._send(self.target_speed, 0.0)
+                self._send(self.target_speed, self.forward_trim)
             elif self.mode == "turn" and not self._is_blocked():
                 self._send(self.target_speed, self.target_omega)
 
@@ -125,8 +150,7 @@ class LaneFollowerNode:
         self.obstacle_blocked = msg.data
 
         if msg.data and not was_blocked:
-            # Obstacle appeared — stop if moving forward or turning
-            if self.mode in ("forward", "turn", "lane_follow"):
+            if self.mode in ("forward", "lane_follow"):
                 self._send(0.0, 0.0)
                 rospy.logwarn("Obstacle — pausing movement")
 
@@ -183,18 +207,24 @@ class LaneFollowerNode:
             self._send(0.0, 0.0)
             return
         if self.mode == "forward":
-            self._send(self.target_speed, 0.0)
+            self._send(self.target_speed, self.forward_trim)
         elif self.mode == "turn":
             self._send(self.target_speed, self.target_omega)
         elif self.mode == "reverse":
-            self._send(-self.target_speed, 0.0)
+            self._send(-self.target_speed, self.forward_trim)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _is_blocked(self):
+        # Manual override bypasses all safety blocks — used when the user
+        # believes the ToF+camera fusion is falsely detecting an obstacle.
+        if self.override:
+            return False
+        if self.mode not in ("forward", "lane_follow"):
+            return False
         if self.obstacle_blocked:
             return True
-        if self.traffic_light in ("red", "yellow") and self.mode != "idle":
+        if self.traffic_light in ("red", "yellow"):
             return True
         return False
 
@@ -203,11 +233,11 @@ class LaneFollowerNode:
         if self._is_blocked():
             return
         if self.mode == "forward":
-            self._send(self.target_speed, 0.0)
+            self._send(self.target_speed, self.forward_trim)
         elif self.mode == "turn":
             self._send(self.target_speed, self.target_omega)
         elif self.mode == "reverse":
-            self._send(-self.target_speed, 0.0)
+            self._send(-self.target_speed, self.forward_trim)
         # lane_follow resumes automatically via on_image
 
     def _do_pass(self, side):
