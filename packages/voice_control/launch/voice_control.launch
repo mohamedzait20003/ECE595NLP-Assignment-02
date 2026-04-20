@@ -5,7 +5,9 @@
   </node>
 
   <!-- Lane follower node: camera PD control, activated by voice -->
-  <node pkg="voice_control" type="lane_follower_node.py" name="lane_follower_node" output="screen" />
+  <node pkg="voice_control" type="lane_follower_node.py" name="lane_follower_node" output="screen">
+    <param name="forward_trim" value="-0.185" />
+  </node>
 
   <!-- Safety node: ToF obstacle detection -->
   <node pkg="voice_control" type="bot_safety_node.py" name="safety_node" output="screen" />
