@@ -8,7 +8,9 @@ from std_msgs.msg import String, Bool
 from voice_control.msg import VoiceCommand
 from sensor_msgs.msg import CompressedImage
 from duckietown_msgs.msg import Twist2DStamped
-from voice_control.utils import (detect_lane, KP, KD, DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SPEED_STEP, HEARTBEAT_TIMEOUT, FORWARD_TRIM)
+from voice_control.utils import (detect_lane, KP, KI, KD, I_CLAMP,
+                                  DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SPEED_STEP,
+                                  HEARTBEAT_TIMEOUT, FORWARD_TRIM)
 
 # Maneuver tuning constants
 _UTURN_OMEGA = 3.5          # rad/s spin rate for U-turn
@@ -27,10 +29,11 @@ class LaneFollowerNode:
         self.target_speed = DEFAULT_SPEED
         self.target_omega = 0.0
         self.prev_error = 0.0
+        self.error_integral = 0.0
         self.last_cmd_time = rospy.Time.now()
 
-        # Wheel-trim counter-steer. Launch-file param wins; falls back to the
-        # env-var default from utils.load_config.
+        # Wheel-trim counter-steer for plain forward/reverse. Launch-file
+        # param wins; falls back to the env-var default from utils.load_config.
         self.forward_trim = float(rospy.get_param("~forward_trim", FORWARD_TRIM))
         rospy.loginfo(f"forward_trim = {self.forward_trim:.3f}")
 
@@ -82,8 +85,6 @@ class LaneFollowerNode:
             rospy.loginfo(f"Voice: MAX SPEED -> {self.target_speed:.2f}")
             if self.mode == "forward" and not self._is_blocked():
                 self._send(self.target_speed, self.forward_trim)
-            elif self.mode == "turn" and not self._is_blocked():
-                self._send(self.target_speed, self.target_omega)
 
         elif msg.cmd == "forward":
             self.mode = "forward"
@@ -93,12 +94,12 @@ class LaneFollowerNode:
             rospy.loginfo(f"Voice: FORWARD at {self.target_speed}")
 
         elif msg.cmd == "turn":
-            self.mode = "turn"
-            self.target_speed = msg.v
-            self.target_omega = msg.omega
-            if not self._is_blocked():
-                self._send(self.target_speed, self.target_omega)
-            rospy.loginfo(f"Voice: TURN omega={self.target_omega}")
+            # In-place rotation — v defaults to 0 (no forward motion).
+            self._do_turn(msg.v, msg.omega)
+
+        elif msg.cmd == "maneuver":
+            v = msg.v if msg.v > 0 else DEFAULT_SPEED
+            self._do_maneuver(v, msg.omega)
 
         elif msg.cmd == "reverse":
             self.mode = "reverse"
@@ -119,7 +120,8 @@ class LaneFollowerNode:
                 rospy.loginfo("Voice: LANE FOLLOW OFF")
 
         elif msg.cmd == "pass":
-            self._do_pass(msg.side)
+            v = msg.v if msg.v > 0 else DEFAULT_SPEED
+            self._do_pass(v, msg.omega)
 
         elif msg.cmd == "turn_around":
             self._do_turn_around()
@@ -132,16 +134,12 @@ class LaneFollowerNode:
             rospy.loginfo(f"Voice: SPEED UP -> {self.target_speed:.2f}")
             if self.mode == "forward" and not self._is_blocked():
                 self._send(self.target_speed, self.forward_trim)
-            elif self.mode == "turn" and not self._is_blocked():
-                self._send(self.target_speed, self.target_omega)
 
         elif msg.cmd == "speed_down":
             self.target_speed = max(self.target_speed - SPEED_STEP, MIN_SPEED)
             rospy.loginfo(f"Voice: SPEED DOWN -> {self.target_speed:.2f}")
             if self.mode == "forward" and not self._is_blocked():
                 self._send(self.target_speed, self.forward_trim)
-            elif self.mode == "turn" and not self._is_blocked():
-                self._send(self.target_speed, self.target_omega)
 
     # ── Obstacle (can pause forward/turn movement) ───────────────────────────
 
@@ -186,7 +184,14 @@ class LaneFollowerNode:
         if lateral_err is None:
             return
 
-        omega = self.forward_trim - (KP * lateral_err + KD * (lateral_err - self.prev_error))
+        # PID on lateral error. Integral accumulates steady-state bias so the
+        # bot counters persistent drift that KP alone can't close out.
+        self.error_integral = max(-I_CLAMP, min(I_CLAMP,
+                                                 self.error_integral + lateral_err))
+        derivative = lateral_err - self.prev_error
+        omega = self.forward_trim - (KP * lateral_err
+                                     + KI * self.error_integral
+                                     + KD * derivative)
         self.prev_error = lateral_err
         self._send(self.target_speed, omega)
 
@@ -208,8 +213,6 @@ class LaneFollowerNode:
             return
         if self.mode == "forward":
             self._send(self.target_speed, self.forward_trim)
-        elif self.mode == "turn":
-            self._send(self.target_speed, self.target_omega)
         elif self.mode == "reverse":
             self._send(-self.target_speed, self.forward_trim)
 
@@ -232,22 +235,46 @@ class LaneFollowerNode:
             return
         if self.mode == "forward":
             self._send(self.target_speed, self.forward_trim)
-        elif self.mode == "turn":
-            self._send(self.target_speed, self.target_omega)
         elif self.mode == "reverse":
             self._send(-self.target_speed, self.forward_trim)
 
-    def _do_pass(self, side):
-        sign = 1.0 if side == "left" else -1.0
-        steps = [
-            (0.3, self.target_speed,  sign * 2.0),
-            (0.8, self.target_speed,  0.0),
-            (0.3, self.target_speed, -sign * 2.0),
-        ]
-        for duration, v, omega in steps:
-            self._send(v, omega)
-            rospy.sleep(duration)
-        self.mode = "lane_follow"
+    def _do_pass(self, v, omega):
+        """Arc ~90° — move and turn simultaneously, then stop."""
+        if omega == 0.0:
+            return
+        self.mode = "pass"
+        duration = (math.pi / 2.0) / abs(omega)
+        self._send(v, omega)
+        rospy.sleep(duration)
+        self._send(0.0, 0.0)
+        self.mode = "idle"
+        rospy.loginfo(f"Voice: PASS complete (v={v}, omega={omega})")
+
+    def _do_turn(self, v, omega):
+        """Arc-turn ~90° then stop. One-shot: no sustained spin."""
+        if omega == 0.0:
+            return
+        self.mode = "turn"
+        duration = (math.pi / 2.0) / abs(omega)
+        self._send(v, omega)
+        rospy.sleep(duration)
+        self._send(0.0, 0.0)
+        self.mode = "idle"
+        rospy.loginfo(f"Voice: TURN complete (omega={omega})")
+
+    def _do_maneuver(self, v, omega):
+        """Arc-turn ~90° then keep moving forward at target_speed."""
+        if omega == 0.0:
+            return
+        self.mode = "maneuver"
+        self.target_speed = v
+        duration = (math.pi / 2.0) / abs(omega)
+        self._send(v, omega)
+        rospy.sleep(duration)
+        self.mode = "forward"
+        if not self._is_blocked():
+            self._send(self.target_speed, self.forward_trim)
+        rospy.loginfo(f"Voice: MANEUVER complete (omega={omega}) — forward")
 
     def _do_turn_around(self):
         """Spin in place 180° then resume forward or lane-follow."""
